@@ -4,15 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1f6feb">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Заказы">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Bundesmarket · Заказы</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E📦%3C/text%3E%3C/svg%3E">
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--ink:#16181d;--mute:#6b7280;--line:#e5e7eb;--acc:#1f6feb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef2f7}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--ink:#e8eaee;--mute:#9aa3af;--line:#2a2f38;--acc:#4c8dff;--chip:#232833}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:10px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top)) 16px 8px;display:flex;align-items:center;gap:10px}
+header #out{padding:6px 10px;font-size:13px}
 header b{flex:1}
-main{max-width:980px;margin:0 auto;padding:12px 16px 80px}
+main{max-width:760px;margin:0 auto;padding:12px 16px calc(96px + env(safe-area-inset-bottom))}
 button,.btn{border:0;border-radius:10px;padding:10px 14px;font:inherit;font-weight:600;background:var(--acc);color:#fff;cursor:pointer}
 button.ghost{background:var(--chip);color:var(--ink)}
 button.ok{background:var(--ok)}button.bad{background:var(--bad)}
@@ -22,8 +31,9 @@ label{display:block;font-size:13px;color:var(--mute);margin:8px 0 4px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
-.tabs{display:flex;gap:6px;overflow-x:auto;margin:4px 0 8px}
-.tabs button{background:var(--chip);color:var(--ink);white-space:nowrap}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin:10px 0;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{background:var(--chip);color:var(--ink);white-space:nowrap;padding:7px 12px;font-size:14px;border-radius:999px;flex:none}
 .tabs button.on{background:var(--acc);color:#fff}
 .chip{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--chip);font-size:12px;font-weight:600}
 .chip.late{background:#fde2e2;color:#991b1b}
@@ -40,15 +50,25 @@ dialog{border:0;border-radius:16px;padding:0;width:min(560px,94vw);background:va
 dialog::backdrop{background:#0008}
 dialog .in{padding:16px;max-height:86vh;overflow:auto}
 img.ph{max-width:100%;border-radius:10px;margin-top:8px}
-.pipe{display:flex;gap:4px;overflow-x:auto;margin:6px 0}
-.pipe span{flex:1;min-width:70px;text-align:center;font-size:11px;padding:6px 2px;border-radius:8px;background:var(--chip)}
-.pipe span.on{background:var(--acc);color:#fff}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0}
+@media(min-width:600px){.stats{grid-template-columns:repeat(6,1fr)}}
+.stats button{display:flex;flex-direction:column;justify-content:flex-start;min-height:64px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:8px 6px;text-align:left;font-weight:400}
+.stats button b{display:block;font-size:22px;line-height:1.1}
+.stats button span{font-size:12px;color:var(--mute)}
+.stats button.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+.bnav{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--card);border-top:1px solid var(--line);display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+.bnav button{flex:1;justify-content:flex-end;background:none;color:var(--mute);padding:6px 2px;font-size:12px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:2px}
+.bnav button i{font-style:normal;font-size:20px;line-height:1}
+.bnav button.on{color:var(--acc)}
+.bnav button.add i{background:var(--acc);color:#fff;border-radius:12px;width:40px;height:28px;display:flex;align-items:center;justify-content:center}
+.o h4{flex:1;min-width:0}
+input,select,textarea{font-size:16px}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:9}
 .hidden{display:none}
 </style>
 </head>
 <body>
-<header><b>Bundesmarket · Заказы</b><span id="who" class="mute"></span><button id="out" class="ghost hidden">Выйти</button></header>
+<header><b>📦 Заказы</b><span id="who" class="mute"></span><button id="out" class="ghost hidden">Выйти</button></header>
 <main id="app"></main>
 <dialog id="dlg"><div class="in" id="dlgIn"></div></dialog>
 <div id="toast"></div>
@@ -139,26 +159,32 @@ async function setStage(id, stage) {
 /* ---------- main (admin / seller) ---------- */
 function mainView() {
   const admin = S.me.role==="admin";
-  const tabs = [["orders","Заказы"],["new","+ Продажа"]].concat(admin?[["money","Деньги"],["settings","Настройки"]]:[]);
-  $("#app").innerHTML = `<div class="tabs">${tabs.map(([k,l])=>`<button class="${S.tab===k?"on":""}" onclick="S.tab='${k}';render()">${l}</button>`).join("")}</div><div id="tab"></div>`;
+  const tabs = [["orders","📋","Заказы"],["new","+","Продажа"]].concat(admin?[["money","💶","Деньги"],["settings","⚙️","Настройки"]]:[]);
+  $("#app").innerHTML = `<div id="tab"></div><nav class="bnav">${tabs.map(([k,ic,l])=>`<button class="${S.tab===k?"on":""} ${k==="new"?"add":""}" onclick="S.tab='${k}';render();scrollTo(0,0)"><i>${ic}</i>${l}</button>`).join("")}</nav>`;
   ({orders:ordersTab, new:()=>orderForm(), money:moneyTab, settings:settingsTab})[S.tab]();
 }
 
-function ordersTab() {
-  const os = S.data.orders, late = os.filter(lateDays);
-  const F = {active:["Активные",o=>!["done","cancelled"].includes(o.stage)], late:[`Задержки (${late.length})`,o=>lateDays(o)],
+function ordFilters() {
+  const late = S.data.orders.filter(lateDays);
+  return {active:["Активные",o=>!["done","cancelled"].includes(o.stage)], late:[`Задержки (${late.length})`,o=>lateDays(o)],
     debt:["Долги",o=>o.stage!=="cancelled" && +o.sale_tjs-paidOf(o.id)>0.009], all:["Все",()=>true]};
-  const q = (S.q||"").toLowerCase();
-  const list = os.filter(F[S.filter][1]).filter(o=>!q || [o.client_name,o.client_phone,o.items,o.tracking_no,o.num].join(" ").toLowerCase().includes(q));
-  const cnt = st => os.filter(o=>o.stage===st).length;
-  $("#tab").innerHTML = `
-    <div class="pipe">${STAGES.slice(0,7).map(([k,l])=>`<span>${l}<br><b>${cnt(k)}</b></span>`).join("")}</div>
-    <div class="tabs">${Object.entries(F).map(([k,[l]])=>`<button class="${S.filter===k?"on":""}" onclick="S.filter='${k}';render()">${l}</button>`).join("")}</div>
-    <input placeholder="Поиск: клиент, телефон, товар, трек…" value="${esc(S.q||"")}" oninput="S.q=this.value;clearTimeout(window._q);window._q=setTimeout(ordersTab,250)">
-    ${list.map(o=>{ const debt=+o.sale_tjs-paidOf(o.id); return `<div class="card o" onclick="openOrder('${o.id}')">
-      <div class="row"><h4 style="flex:1">№${o.num} · ${esc(o.client_name)}</h4>${stageChip(o)}</div>
+}
+function listHtml() {
+  const F = ordFilters(), q = (S.q||"").toLowerCase();
+  const flt = S.filter.startsWith("st:") ? (o=>o.stage===S.filter.slice(3)) : F[S.filter][1];
+  const list = S.data.orders.filter(flt).filter(o=>!q || [o.client_name,o.client_phone,o.items,o.tracking_no,o.num].join(" ").toLowerCase().includes(q));
+  return list.map(o=>{ const debt=+o.sale_tjs-paidOf(o.id); return `<div class="card o" onclick="openOrder('${o.id}')">
+      <div class="row"><h4>№${o.num} · ${esc(o.client_name)}</h4>${stageChip(o)}</div>
       <div>${esc(o.items)}</div>
-      <div class="mute">${d(o.created_at)} · ${fmt(o.sale_tjs)} TJS${debt>0.009?` · <b style="color:var(--bad)">долг ${fmt(debt)}</b>`:" · оплачено"}${o.tracking_no?` · ${esc(o.carrier||"")} ${esc(o.tracking_no)}`:""}${o.photo_url?" · 📷":""}</div></div>`}).join("") || '<p class="mute">Нет заказов</p>'}`;
+      <div class="mute">${d(o.created_at)} · ${fmt(o.sale_tjs)} TJS${debt>0.009?` · <b style="color:var(--bad)">долг ${fmt(debt)}</b>`:" · оплачено"}${o.tracking_no?` · ${esc(o.carrier||"")} ${esc(o.tracking_no)}`:""}${o.photo_url?" · 📷":""}</div></div>`}).join("") || '<p class="mute">Нет заказов</p>';
+}
+function ordersTab() {
+  const os = S.data.orders, F = ordFilters(), cnt = st => os.filter(o=>o.stage===st).length;
+  $("#tab").innerHTML = `
+    <div class="stats">${STAGES.slice(0,6).map(([k,l])=>`<button class="${S.filter==="st:"+k?"on":""}" onclick="S.filter=S.filter==='st:${k}'?'active':'st:${k}';render()"><b>${cnt(k)}</b><span>${l}</span></button>`).join("")}</div>
+    <div class="tabs">${Object.entries(F).map(([k,[l]])=>`<button class="${S.filter===k?"on":""}" onclick="S.filter='${k}';render()">${l}</button>`).join("")}</div>
+    <input type="search" placeholder="Поиск: клиент, телефон, товар, трек…" value="${esc(S.q||"")}" oninput="S.q=this.value;$('#olist').innerHTML=listHtml()">
+    <div id="olist">${listHtml()}</div>`;
 }
 
 function orderForm(o={}) {
@@ -268,6 +294,7 @@ async function saveSet() {
 }
 
 /* ---------- start ---------- */
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 S.pin = store.get("bm_pin");
 S.pin ? load().catch(()=>{ S.pin=null; loginView(); }) : loginView();
 </script>
