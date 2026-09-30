@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Bundesmarket · Заказы</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#16181d;--mute:#6b7280;--line:#e5e7eb;--acc:#1f6feb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef2f7}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--ink:#e8eaee;--mute:#9aa3af;--line:#2a2f38;--acc:#4c8dff;--chip:#232833}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:10px}
+header b{flex:1}
+main{max-width:980px;margin:0 auto;padding:12px 16px 80px}
+button,.btn{border:0;border-radius:10px;padding:10px 14px;font:inherit;font-weight:600;background:var(--acc);color:#fff;cursor:pointer}
+button.ghost{background:var(--chip);color:var(--ink)}
+button.ok{background:var(--ok)}button.bad{background:var(--bad)}
+button:disabled{opacity:.5}
+input,select,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit}
+label{display:block;font-size:13px;color:var(--mute);margin:8px 0 4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin:4px 0 8px}
+.tabs button{background:var(--chip);color:var(--ink);white-space:nowrap}
+.tabs button.on{background:var(--acc);color:#fff}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--chip);font-size:12px;font-weight:600}
+.chip.late{background:#fde2e2;color:#991b1b}
+.mute{color:var(--mute);font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px}
+.kpi .v{font-size:20px;font-weight:700}
+.o{cursor:pointer}
+.o h4{margin:0 0 4px;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+td.n,th.n{text-align:right;white-space:nowrap}
+dialog{border:0;border-radius:16px;padding:0;width:min(560px,94vw);background:var(--card);color:var(--ink)}
+dialog::backdrop{background:#0008}
+dialog .in{padding:16px;max-height:86vh;overflow:auto}
+img.ph{max-width:100%;border-radius:10px;margin-top:8px}
+.pipe{display:flex;gap:4px;overflow-x:auto;margin:6px 0}
+.pipe span{flex:1;min-width:70px;text-align:center;font-size:11px;padding:6px 2px;border-radius:8px;background:var(--chip)}
+.pipe span.on{background:var(--acc);color:#fff}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:9}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header><b>Bundesmarket · Заказы</b><span id="who" class="mute"></span><button id="out" class="ghost hidden">Выйти</button></header>
+<main id="app"></main>
+<dialog id="dlg"><div class="in" id="dlgIn"></div></dialog>
+<div id="toast"></div>
+
+<script>
+const API = "https://jegfxrwsjxsizurfebej.supabase.co/functions/v1/ops";
+const STAGES = [
+  ["ordered","Заказ принят"],["purchased","Оформлен в магазине"],["shipped","Едет к работнику"],
+  ["received","У работника"],["airport","Сдан на рейс"],["arrived","В Таджикистане"],["done","Выдан клиенту"],["cancelled","Отменён"]];
+const SL = Object.fromEntries(STAGES);
+const EXP = {flight:"Авиа / перевозка",worker:"Оплата работнику",local_delivery:"Доставка в ТJ",other:"Другое"};
+let S = {pin:null, me:null, data:null, tab:"orders", filter:"active", period:"month"};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = n => (Math.round((+n||0)*100)/100).toLocaleString("ru-RU");
+const d = s => s ? new Date(s).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit"}) : "";
+const toast = t => { const e=$("#toast"); e.textContent=t; e.style.display="block"; clearTimeout(e._t); e._t=setTimeout(()=>e.style.display="none",2500); };
+const store = {get(k){try{return localStorage.getItem(k)}catch{return null}}, set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch{}}};
+
+async function call(action, extra={}) {
+  const r = await fetch(API, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({pin:S.pin, action, ...extra})});
+  const j = await r.json().catch(()=>({error:"Нет связи"}));
+  if (!r.ok || j.error) throw new Error(j.error || "Ошибка");
+  return j;
+}
+
+/* ---------- login ---------- */
+function loginView(msg="") {
+  $("#who").textContent=""; $("#out").classList.add("hidden");
+  $("#app").innerHTML = `<div class="card" style="max-width:360px;margin:40px auto">
+    <h3 style="margin-top:0">Вход</h3><label>PIN-код</label>
+    <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="12">
+    <p class="mute" style="color:var(--bad)">${esc(msg)}</p><button id="go" style="width:100%">Войти</button></div>`;
+  const go = async () => { S.pin = $("#pin").value.trim(); try { await load(); store.set("bm_pin", S.pin); } catch(e){ S.pin=null; loginView(e.message); } };
+  $("#go").onclick = go; $("#pin").onkeydown = e => e.key==="Enter" && go(); $("#pin").focus();
+}
+$("#out").onclick = () => { store.set("bm_pin", null); S.pin=null; loginView(); };
+
+async function load() {
+  S.data = await call("list"); S.me = S.data.me;
+  $("#who").textContent = S.me.name; $("#out").classList.remove("hidden");
+  render();
+}
+function render() { S.me.role==="worker" ? workerView() : mainView(); }
+
+/* ---------- helpers ---------- */
+const paidOf = id => (S.data.payments||[]).filter(p=>p.order_id===id).reduce((a,p)=>a+ +p.amount_tjs,0);
+const rate = () => +(S.data.settings?.eur_tjs||11.5);
+const lateDays = o => {
+  if (["ordered","done","cancelled"].includes(o.stage)) return 0;
+  const days = (Date.now()-new Date(o.stage_at))/864e5, lim = +(S.data.settings?.delay_days||5);
+  return days > lim ? Math.floor(days) : 0;
+};
+const stageChip = o => { const l = lateDays(o); return `<span class="chip ${l?"late":""}">${SL[o.stage]}${l?` · ${l} дн.`:""}</span>`; };
+
+/* ---------- worker ---------- */
+function workerView() {
+  const os = S.data.orders;
+  const wait = os.filter(o=>["purchased","shipped"].includes(o.stage)), have = os.filter(o=>o.stage==="received");
+  const card = (o,btns) => `<div class="card"><h4 style="margin:0">№${o.num} · ${esc(o.items)}</h4>
+    <div class="mute">${esc(o.client_name)} ${o.shop?"· "+esc(o.shop):""} ${o.carrier?"· "+esc(o.carrier):""} ${o.tracking_no?"· "+esc(o.tracking_no):""}</div>
+    ${o.photo_url?`<img class="ph" src="${o.photo_url}" loading="lazy">`:""}<div class="row" style="margin-top:10px">${btns(o)}</div></div>`;
+  $("#app").innerHTML = `<h3>Ожидаются (${wait.length})</h3>
+    ${wait.map(o=>card(o,o=>`<button class="ok" onclick="receive('${o.id}')">📦 Получил + фото</button>`)).join("")||'<p class="mute">Пока ничего не ожидается</p>'}
+    <h3>У меня (${have.length})</h3>
+    ${have.map(o=>card(o,o=>`<button onclick="setStage('${o.id}','airport')">✈️ Сдал на рейс</button>${o.photo_url?"":`<button class="ghost" onclick="receive('${o.id}')">Добавить фото</button>`}`)).join("")||'<p class="mute">Пусто</p>'}`;
+}
+function pickPhoto() {
+  return new Promise(res => {
+    const i = document.createElement("input"); i.type="file"; i.accept="image/*"; i.capture="environment";
+    i.onchange = () => { const f=i.files[0]; if(!f) return res(null);
+      const img=new Image(); img.onload=()=>{ const k=Math.min(1,1280/Math.max(img.width,img.height));
+        const c=document.createElement("canvas"); c.width=img.width*k; c.height=img.height*k;
+        c.getContext("2d").drawImage(img,0,0,c.width,c.height); res(c.toDataURL("image/jpeg",0.7)); URL.revokeObjectURL(img.src); };
+      img.src=URL.createObjectURL(f); };
+    i.click();
+  });
+}
+async function receive(id) {
+  const photo = await pickPhoto(); if (!photo) return toast("Фото не выбрано");
+  toast("Загружаю…");
+  try { await call("set_stage",{id, stage:"received", photo}); toast("Готово ✓"); await load(); } catch(e){ toast(e.message); }
+}
+async function setStage(id, stage) {
+  try { await call("set_stage",{id, stage}); toast("Сохранено ✓"); $("#dlg").open && $("#dlg").close(); await load(); } catch(e){ toast(e.message); }
+}
+
+/* ---------- main (admin / seller) ---------- */
+function mainView() {
+  const admin = S.me.role==="admin";
+  const tabs = [["orders","Заказы"],["new","+ Продажа"]].concat(admin?[["money","Деньги"],["settings","Настройки"]]:[]);
+  $("#app").innerHTML = `<div class="tabs">${tabs.map(([k,l])=>`<button class="${S.tab===k?"on":""}" onclick="S.tab='${k}';render()">${l}</button>`).join("")}</div><div id="tab"></div>`;
+  ({orders:ordersTab, new:()=>orderForm(), money:moneyTab, settings:settingsTab})[S.tab]();
+}
+
+function ordersTab() {
+  const os = S.data.orders, late = os.filter(lateDays);
+  const F = {active:["Активные",o=>!["done","cancelled"].includes(o.stage)], late:[`Задержки (${late.length})`,o=>lateDays(o)],
+    debt:["Долги",o=>o.stage!=="cancelled" && +o.sale_tjs-paidOf(o.id)>0.009], all:["Все",()=>true]};
+  const q = (S.q||"").toLowerCase();
+  const list = os.filter(F[S.filter][1]).filter(o=>!q || [o.client_name,o.client_phone,o.items,o.tracking_no,o.num].join(" ").toLowerCase().includes(q));
+  const cnt = st => os.filter(o=>o.stage===st).length;
+  $("#tab").innerHTML = `
+    <div class="pipe">${STAGES.slice(0,7).map(([k,l])=>`<span>${l}<br><b>${cnt(k)}</b></span>`).join("")}</div>
+    <div class="tabs">${Object.entries(F).map(([k,[l]])=>`<button class="${S.filter===k?"on":""}" onclick="S.filter='${k}';render()">${l}</button>`).join("")}</div>
+    <input placeholder="Поиск: клиент, телефон, товар, трек…" value="${esc(S.q||"")}" oninput="S.q=this.value;clearTimeout(window._q);window._q=setTimeout(ordersTab,250)">
+    ${list.map(o=>{ const debt=+o.sale_tjs-paidOf(o.id); return `<div class="card o" onclick="openOrder('${o.id}')">
+      <div class="row"><h4 style="flex:1">№${o.num} · ${esc(o.client_name)}</h4>${stageChip(o)}</div>
+      <div>${esc(o.items)}</div>
+      <div class="mute">${d(o.created_at)} · ${fmt(o.sale_tjs)} TJS${debt>0.009?` · <b style="color:var(--bad)">долг ${fmt(debt)}</b>`:" · оплачено"}${o.tracking_no?` · ${esc(o.carrier||"")} ${esc(o.tracking_no)}`:""}${o.photo_url?" · 📷":""}</div></div>`}).join("") || '<p class="mute">Нет заказов</p>'}`;
+}
+
+function orderForm(o={}) {
+  const users = (S.data.users||[]).filter(u=>u.role==="worker");
+  const v = k => esc(o[k] ?? "");
+  const html = `<h3 style="margin-top:0">${o.id?`Заказ №${o.num}`:"Новая продажа"}</h3>
+   <div class="grid2"><div><label>Клиент *</label><input id="f_client_name" value="${v("client_name")}"></div>
+   <div><label>Телефон</label><input id="f_client_phone" inputmode="tel" value="${v("client_phone")}"></div></div>
+   <label>Товар(ы) *</label><textarea id="f_items" rows="2">${v("items")}</textarea>
+   <div class="grid2"><div><label>Цена клиенту, TJS</label><input id="f_sale_tjs" inputmode="decimal" value="${v("sale_tjs")}"></div>
+   ${o.id?`<div><label>Закупка, €</label><input id="f_purchase_eur" inputmode="decimal" value="${v("purchase_eur")}"></div>`:
+   `<div><label>Уже оплачено, TJS</label><input id="f_paid" inputmode="decimal"></div>`}</div>
+   ${o.id?"":`<label>Закупка, € (если уже известна)</label><input id="f_purchase_eur" inputmode="decimal">`}
+   <div class="grid2"><div><label>Магазин</label><input id="f_shop" value="${v("shop")}" placeholder="dm, Amazon…"></div>
+   <div><label>Получение</label><select id="f_delivery_mode"><option value="pickup">Самовывоз</option><option value="address" ${o.delivery_mode==="address"?"selected":""}>Доставка на адрес</option></select></div></div>
+   <label>Адрес в Таджикистане</label><input id="f_address" value="${v("address")}">
+   <div class="grid2"><div><label>Служба доставки</label><input id="f_carrier" value="${v("carrier")}" placeholder="DHL, Hermes, DPD…"></div>
+   <div><label>Трек-номер</label><input id="f_tracking_no" value="${v("tracking_no")}"></div></div>
+   <div class="grid2"><div><label>Работник</label><select id="f_worker_id"><option value="">—</option>${users.map(u=>`<option value="${u.id}" ${o.worker_id===u.id?"selected":""}>${esc(u.name)}</option>`).join("")}</select></div>
+   <div><label>Дата рейса</label><input id="f_flight_date" type="date" value="${v("flight_date")}"></div></div>
+   <label>Заметки</label><textarea id="f_notes" rows="2">${v("notes")}</textarea>
+   <div class="row" style="margin-top:12px"><button id="save">Сохранить</button>${o.id?`<button class="ghost" onclick="$('#dlg').close()">Закрыть</button>`:""}</div>`;
+  const box = o.id ? $("#dlgIn") : $("#tab");
+  box.innerHTML = o.id ? html + orderExtras(o) : `<div class="card">${html}</div>`;
+  $("#save").onclick = async () => {
+    const f = {}; ["client_name","client_phone","items","sale_tjs","purchase_eur","shop","delivery_mode","address","carrier","tracking_no","worker_id","flight_date","notes"]
+      .forEach(k=>{ const e=$("#f_"+k); if(e) f[k]=e.value.trim().replace(/^(\d+),(\d+)$/,"$1.$2"); });
+    if (o.id) f.id=o.id;
+    try { const r = await call("save_order",{order:f, paid_tjs:($("#f_paid")?.value||"").replace(",",".")});
+      if (!o.id && f.tracking_no) await call("set_stage",{id:r.order.id, stage:"shipped"});
+      toast("Сохранено ✓"); if(o.id) $("#dlg").close(); else S.tab="orders"; await load(); } catch(e){ toast(e.message); }
+  };
+}
+
+function orderExtras(o) {
+  const pays = (S.data.payments||[]).filter(p=>p.order_id===o.id), paid = paidOf(o.id);
+  return `<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+   <b>Этап:</b> ${stageChip(o)} <span class="mute">с ${d(o.stage_at)}</span>
+   <div class="row" style="margin-top:8px">${STAGES.filter(([k])=>k!==o.stage).map(([k,l])=>`<button class="${k==="cancelled"?"bad":"ghost"}" onclick="setStage('${o.id}','${k}')">${l}</button>`).join("")}</div>
+   ${o.photo_url?`<img class="ph" src="${o.photo_url}">`:""}
+   <h4>Оплаты: ${fmt(paid)} из ${fmt(o.sale_tjs)} TJS</h4>
+   ${pays.map(p=>`<div class="mute">${d(p.paid_at)} · ${fmt(p.amount_tjs)} TJS ${esc(p.note||"")}</div>`).join("")}
+   <div class="row" style="margin-top:8px"><input id="payAmt" inputmode="decimal" placeholder="Сумма, TJS" style="flex:1"><button class="ok" onclick="addPay('${o.id}')">+ Оплата</button></div>`;
+}
+function openOrder(id) { const o=S.data.orders.find(x=>x.id===id); orderForm(o); $("#dlg").showModal(); }
+async function addPay(id) {
+  const a = +($("#payAmt").value||"").replace(",","."); if(!a) return toast("Введите сумму");
+  try { await call("add_payment",{order_id:id, amount_tjs:a}); toast("Оплата добавлена ✓"); await load(); openOrder(id); } catch(e){ toast(e.message); }
+}
+
+/* ---------- money ---------- */
+function periodRange(p) {
+  const n=new Date(), y=n.getFullYear(), m=n.getMonth();
+  if (p==="week") { const s=new Date(n); s.setDate(n.getDate()-((n.getDay()+6)%7)); s.setHours(0,0,0,0); return [s,null]; }
+  if (p==="month") return [new Date(y,m,1),null];
+  if (p==="prev") return [new Date(y,m-1,1),new Date(y,m,1)];
+  return [new Date(0),null];
+}
+function moneyTab() {
+  const [a,b] = periodRange(S.period), inP = s => { const t=new Date(s); return t>=a && (!b||t<b); }, R = rate();
+  const os = S.data.orders.filter(o=>o.stage!=="cancelled" && inP(o.created_at));
+  const sales = os.reduce((s,o)=>s+ +o.sale_tjs,0);
+  const buyE = os.reduce((s,o)=>s+ +(o.purchase_eur||0),0), noBuy = os.filter(o=>o.purchase_eur==null).length;
+  const got = (S.data.payments||[]).filter(p=>inP(p.paid_at)).reduce((s,p)=>s+ +p.amount_tjs,0);
+  const ex = (S.data.expenses||[]).filter(e=>inP(e.spent_at));
+  const exT = ex.reduce((s,e)=>s+(e.currency==="EUR"? e.amount*R : +e.amount),0);
+  const profit = sales - buyE*R - exT;
+  const debtors = S.data.orders.filter(o=>o.stage!=="cancelled").map(o=>({o,debt:+o.sale_tjs-paidOf(o.id)})).filter(x=>x.debt>0.009);
+  const debtSum = debtors.reduce((s,x)=>s+x.debt,0);
+  const P = {week:"Неделя",month:"Этот месяц",prev:"Прошлый месяц",all:"Всё время"};
+  $("#tab").innerHTML = `<div class="tabs">${Object.entries(P).map(([k,l])=>`<button class="${S.period===k?"on":""}" onclick="S.period='${k}';render()">${l}</button>`).join("")}</div>
+   <div class="kpis">
+    <div class="kpi"><div class="mute">Продажи (${os.length} зак.)</div><div class="v">${fmt(sales)} TJS</div></div>
+    <div class="kpi"><div class="mute">Получено денег</div><div class="v">${fmt(got)} TJS</div></div>
+    <div class="kpi"><div class="mute">Закупка</div><div class="v">${fmt(buyE)} €</div><div class="mute">≈ ${fmt(buyE*R)} TJS${noBuy?` · без цены: ${noBuy}`:""}</div></div>
+    <div class="kpi"><div class="mute">Расходы на доставку</div><div class="v">${fmt(exT)} TJS</div></div>
+    <div class="kpi"><div class="mute">Прибыль</div><div class="v" style="color:${profit>=0?"var(--ok)":"var(--bad)"}">${fmt(profit)} TJS</div></div>
+    <div class="kpi"><div class="mute">Долги клиентов (всего)</div><div class="v" style="color:var(--bad)">${fmt(debtSum)} TJS</div></div>
+   </div>
+   <p class="mute">Курс: 1 € = ${R} TJS (меняется в «Настройках»). Прибыль = продажи − закупка − расходы.${noBuy?" Заказы без цены закупки считаются как 0 €.":""}</p>
+   <div class="card"><b>По заказам</b><table><tr><th>№</th><th>Клиент</th><th class="n">Продажа</th><th class="n">Закупка</th><th class="n">Маржа</th></tr>
+    ${os.map(o=>`<tr class="o" onclick="openOrder('${o.id}')"><td>${o.num}</td><td>${esc(o.client_name)}</td><td class="n">${fmt(o.sale_tjs)}</td><td class="n">${o.purchase_eur==null?"—":fmt(o.purchase_eur)+" €"}</td><td class="n">${o.purchase_eur==null?"—":fmt(o.sale_tjs-o.purchase_eur*R)}</td></tr>`).join("")}</table></div>
+   <div class="card"><b>Должники</b><table>${debtors.map(x=>`<tr class="o" onclick="openOrder('${x.o.id}')"><td>№${x.o.num} ${esc(x.o.client_name)}</td><td class="mute">${esc(x.o.client_phone||"")}</td><td class="n" style="color:var(--bad)">${fmt(x.debt)} TJS</td></tr>`).join("")||'<tr><td class="mute">Долгов нет</td></tr>'}</table></div>
+   <div class="card"><b>Расходы</b>
+    <div class="grid2"><div><label>Категория</label><select id="e_cat">${Object.entries(EXP).map(([k,l])=>`<option value="${k}">${l}</option>`).join("")}</select></div>
+    <div><label>Дата</label><input id="e_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div><label>Сумма</label><input id="e_amt" inputmode="decimal"></div>
+    <div><label>Валюта</label><select id="e_cur"><option>EUR</option><option>TJS</option></select></div></div>
+    <label>Комментарий</label><input id="e_note" placeholder="напр. рейс 12.10, 8 кг">
+    <button style="margin-top:10px" onclick="addExp()">+ Расход</button>
+    <table style="margin-top:10px">${ex.map(e=>`<tr><td>${d(e.spent_at)}</td><td>${EXP[e.category]}<div class="mute">${esc(e.note||"")}</div></td><td class="n">${fmt(e.amount)} ${e.currency}</td><td class="n"><button class="ghost" onclick="delExp('${e.id}')">✕</button></td></tr>`).join("")}</table></div>`;
+}
+async function addExp() {
+  const amount = +($("#e_amt").value||"").replace(",","."); if(!amount) return toast("Введите сумму");
+  try { await call("add_expense",{expense:{category:$("#e_cat").value, spent_at:$("#e_date").value, amount, currency:$("#e_cur").value, note:$("#e_note").value}}); toast("Добавлено ✓"); await load(); } catch(e){ toast(e.message); }
+}
+async function delExp(id) { try { await call("delete_expense",{id}); await load(); } catch(e){ toast(e.message); } }
+
+function settingsTab() {
+  const s = S.data.settings||{};
+  $("#tab").innerHTML = `<div class="card"><label>Курс: 1 € = ? TJS</label><input id="s_rate" inputmode="decimal" value="${esc(s.eur_tjs)}">
+   <label>Считать задержкой, если заказ стоит на одном этапе больше (дней)</label><input id="s_delay" inputmode="numeric" value="${esc(s.delay_days)}">
+   <button style="margin-top:12px" onclick="saveSet()">Сохранить</button></div>`;
+}
+async function saveSet() {
+  try { await call("set_setting",{key:"eur_tjs", value:$("#s_rate").value.replace(",",".")}); await call("set_setting",{key:"delay_days", value:$("#s_delay").value}); toast("Сохранено ✓"); await load(); } catch(e){ toast(e.message); }
+}
+
+/* ---------- start ---------- */
+S.pin = store.get("bm_pin");
+S.pin ? load().catch(()=>{ S.pin=null; loginView(); }) : loginView();
+</script>
+</body>
+</html>
