@@ -65,6 +65,8 @@ img.ph{max-width:100%;border-radius:10px;margin-top:8px}
 input,select,textarea{font-size:16px}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:9}
 .hidden{display:none}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pad button{font-size:24px;padding:16px 0;border-radius:14px}
 </style>
 </head>
 <body>
@@ -98,13 +100,35 @@ async function call(action, extra={}) {
 /* ---------- login ---------- */
 function loginView(msg="") {
   $("#who").textContent=""; $("#out").classList.add("hidden");
-  $("#app").innerHTML = `<div class="card" style="max-width:360px;margin:40px auto">
-    <h3 style="margin-top:0">Вход</h3><label>PIN-код</label>
-    <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="12">
-    <p class="mute" style="color:var(--bad)">${esc(msg)}</p><button id="go" style="width:100%">Войти</button></div>`;
-  const go = async () => { S.pin = $("#pin").value.trim(); try { await load(); store.set("bm_pin", S.pin); } catch(e){ S.pin=null; loginView(e.message); } };
-  $("#go").onclick = go; $("#pin").onkeydown = e => e.key==="Enter" && go(); $("#pin").focus();
+  let pin = "";
+  $("#app").innerHTML = `<div style="max-width:320px;margin:24px auto;text-align:center">
+    <h3>Введите PIN</h3>
+    <div id="dots" style="display:flex;gap:12px;justify-content:center;margin:16px 0"></div>
+    <p id="pmsg" class="mute" style="color:var(--bad);min-height:20px">${esc(msg)}</p>
+    <div class="pad">${[1,2,3,4,5,6,7,8,9,"⌫",0,"✓"].map(k=>`<button data-k="${k}" class="${k==="✓"?"":"ghost"}">${k}</button>`).join("")}</div></div>`;
+  const dots = () => $("#dots").innerHTML = Array.from({length:Math.max(6,pin.length)},(_,i)=>`<span style="width:14px;height:14px;border-radius:50%;border:2px solid var(--acc);background:${i<pin.length?"var(--acc)":"transparent"}"></span>`).join("");
+  const go = async () => { if(!pin) return; S.pin = pin; $("#pmsg").textContent="Проверяю…";
+    try { await load(); store.set("bm_pin", S.pin); } catch(e){ S.pin=null; loginView(e.message); } };
+  document.querySelectorAll(".pad button").forEach(b => b.onclick = () => {
+    const k = b.dataset.k;
+    if (k==="⌫") pin = pin.slice(0,-1); else if (k==="✓") return go(); else if (pin.length<12) pin += k;
+    dots(); if (pin.length===6) go();
+  });
+  document.onkeydown = e => { if(!$("#dots")) return; if(/^\d$/.test(e.key) && pin.length<12){pin+=e.key;dots(); if(pin.length===6) go();} else if(e.key==="Backspace"){pin=pin.slice(0,-1);dots();} else if(e.key==="Enter") go(); };
+  dots();
 }
+function trackUrl(o) {
+  const n = encodeURIComponent((o.tracking_no||"").trim()), c = (o.carrier||"").toLowerCase(), t = (o.tracking_no||"").toUpperCase();
+  if (!n) return null;
+  if (c.includes("dhl") || /^(JJD|JVGL|00340)/.test(t)) return "https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode="+n;
+  if (c.includes("hermes")) return "https://www.myhermes.de/empfangen/sendungsverfolgung/sendungsinformation#"+n;
+  if (c.includes("dpd")) return "https://tracking.dpd.de/status/de_DE/parcel/"+n;
+  if (c.includes("gls")) return "https://gls-group.com/DE/de/paketverfolgung?match="+n;
+  if (c.includes("ups") || /^1Z/.test(t)) return "https://www.ups.com/track?tracknum="+n;
+  if (c.includes("amazon")) return "https://track.amazon.de/tracking/"+n;
+  return "https://parcelsapp.com/ru/tracking/"+n;
+}
+const trackBtn = o => { const u = trackUrl(o); return u ? `<a class="btn" style="background:var(--chip);color:var(--ink);text-decoration:none;display:inline-block" href="${u}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 Где посылка?</a>` : ""; };
 $("#out").onclick = () => { store.set("bm_pin", null); S.pin=null; loginView(); };
 
 async function load() {
@@ -130,7 +154,7 @@ function workerView() {
   const wait = os.filter(o=>["purchased","shipped"].includes(o.stage)), have = os.filter(o=>o.stage==="received");
   const card = (o,btns) => `<div class="card"><h4 style="margin:0">№${o.num} · ${esc(o.items)}</h4>
     <div class="mute">${esc(o.client_name)} ${o.shop?"· "+esc(o.shop):""} ${o.carrier?"· "+esc(o.carrier):""} ${o.tracking_no?"· "+esc(o.tracking_no):""}</div>
-    ${o.photo_url?`<img class="ph" src="${o.photo_url}" loading="lazy">`:""}<div class="row" style="margin-top:10px">${btns(o)}</div></div>`;
+    ${o.photo_url?`<img class="ph" src="${o.photo_url}" loading="lazy">`:""}<div class="row" style="margin-top:10px">${btns(o)}${trackBtn(o)}</div></div>`;
   $("#app").innerHTML = `<h3>Ожидаются (${wait.length})</h3>
     ${wait.map(o=>card(o,o=>`<button class="ok" onclick="receive('${o.id}')">📦 Получил + фото</button>`)).join("")||'<p class="mute">Пока ничего не ожидается</p>'}
     <h3>У меня (${have.length})</h3>
@@ -222,7 +246,7 @@ function orderForm(o={}) {
 function orderExtras(o) {
   const pays = (S.data.payments||[]).filter(p=>p.order_id===o.id), paid = paidOf(o.id);
   return `<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
-   <b>Этап:</b> ${stageChip(o)} <span class="mute">с ${d(o.stage_at)}</span>
+   <b>Этап:</b> ${stageChip(o)} <span class="mute">с ${d(o.stage_at)}</span> ${trackBtn(o)}
    <div class="row" style="margin-top:8px">${STAGES.filter(([k])=>k!==o.stage).map(([k,l])=>`<button class="${k==="cancelled"?"bad":"ghost"}" onclick="setStage('${o.id}','${k}')">${l}</button>`).join("")}</div>
    ${o.photo_url?`<img class="ph" src="${o.photo_url}">`:""}
    <h4>Оплаты: ${fmt(paid)} из ${fmt(o.sale_tjs)} TJS</h4>
