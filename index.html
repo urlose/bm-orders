@@ -154,6 +154,7 @@ function workerView() {
   const wait = os.filter(o=>["purchased","shipped"].includes(o.stage)), have = os.filter(o=>o.stage==="received");
   const card = (o,btns) => `<div class="card"><h4 style="margin:0">№${o.num} · ${esc(o.items)}</h4>
     <div class="mute">${esc(o.client_name)} ${o.shop?"· "+esc(o.shop):""} ${o.carrier?"· "+esc(o.carrier):""} ${o.tracking_no?"· "+esc(o.tracking_no):""}</div>
+    ${o.parcel_delivered_at?`<div><b>📬 Доставлено службой ${d(o.parcel_delivered_at)}</b> — проверьте и подтвердите получение</div>`:""}
     ${o.photo_url?`<img class="ph" src="${o.photo_url}" loading="lazy">`:""}<div class="row" style="margin-top:10px">${btns(o)}${trackBtn(o)}</div></div>`;
   $("#app").innerHTML = `<h3>Ожидаются (${wait.length})</h3>
     ${wait.map(o=>card(o,o=>`<button class="ok" onclick="receive('${o.id}')">📦 Получил + фото</button>`)).join("")||'<p class="mute">Пока ничего не ожидается</p>'}
@@ -177,6 +178,12 @@ async function receive(id) {
   try { await call("set_stage",{id, stage:"received", photo}); toast("Готово ✓"); await load(); } catch(e){ toast(e.message); }
 }
 async function setStage(id, stage) {
+  const o = (S.data.orders||[]).find(x=>x.id===id);
+  if (stage==="purchased" && o && !o.shop_order_no && S.me.role!=="worker") {
+    const no = prompt("№ заказа в магазине (из письма-подтверждения).\nПо нему письма о доставке привяжутся сами. Можно оставить пустым.");
+    if (no===null) return;
+    if (no.trim()) { try { const r = await call("save_order",{order:{id, shop_order_no:no.trim()}}); if(r.matched) toast(`Привязано писем: ${r.matched}`); } catch(e){ return toast(e.message); } }
+  }
   try { await call("set_stage",{id, stage}); toast("Сохранено ✓"); $("#dlg").open && $("#dlg").close(); await load(); } catch(e){ toast(e.message); }
 }
 
@@ -191,16 +198,18 @@ function mainView() {
 function ordFilters() {
   const late = S.data.orders.filter(lateDays);
   return {active:["Активные",o=>!["done","cancelled"].includes(o.stage)], late:[`Задержки (${late.length})`,o=>lateDays(o)],
-    debt:["Долги",o=>o.stage!=="cancelled" && +o.sale_tjs-paidOf(o.id)>0.009], all:["Все",()=>true]};
+    debt:["Долги",o=>o.stage!=="cancelled" && +o.sale_tjs-paidOf(o.id)>0.009], all:["Все",()=>true],
+    mail:[`✉️ Письма (${unmatched().length})`,()=>false]};
 }
 function listHtml() {
+  if (S.filter==="mail") return mailsHtml();
   const F = ordFilters(), q = (S.q||"").toLowerCase();
   const flt = S.filter.startsWith("st:") ? (o=>o.stage===S.filter.slice(3)) : F[S.filter][1];
-  const list = S.data.orders.filter(flt).filter(o=>!q || [o.client_name,o.client_phone,o.items,o.tracking_no,o.num].join(" ").toLowerCase().includes(q));
+  const list = S.data.orders.filter(flt).filter(o=>!q || [o.client_name,o.client_phone,o.items,o.tracking_no,o.shop_order_no,o.num].join(" ").toLowerCase().includes(q));
   return list.map(o=>{ const debt=+o.sale_tjs-paidOf(o.id); return `<div class="card o" onclick="openOrder('${o.id}')">
       <div class="row"><h4>№${o.num} · ${esc(o.client_name)}</h4>${stageChip(o)}</div>
       <div>${esc(o.items)}</div>
-      <div class="mute">${d(o.created_at)} · ${fmt(o.sale_tjs)} TJS${debt>0.009?` · <b style="color:var(--bad)">долг ${fmt(debt)}</b>`:" · оплачено"}${o.tracking_no?` · ${esc(o.carrier||"")} ${esc(o.tracking_no)}`:""}${o.photo_url?" · 📷":""}</div></div>`}).join("") || '<p class="mute">Нет заказов</p>';
+      <div class="mute">${d(o.created_at)} · ${fmt(o.sale_tjs)} TJS${debt>0.009?` · <b style="color:var(--bad)">долг ${fmt(debt)}</b>`:" · оплачено"}${o.tracking_no?` · ${esc(o.carrier||"")} ${esc(o.tracking_no)}`:""}${o.parcel_delivered_at?" · 📬 доставлено":""}${o.photo_url?" · 📷":""}</div></div>`}).join("") || '<p class="mute">Нет заказов</p>';
 }
 function ordersTab() {
   const os = S.data.orders, F = ordFilters(), cnt = st => os.filter(o=>o.stage===st).length;
@@ -223,8 +232,10 @@ function orderForm(o={}) {
    `<div><label>Уже оплачено, TJS</label><input id="f_paid" inputmode="decimal"></div>`}</div>
    ${o.id?"":`<label>Закупка, € (если уже известна)</label><input id="f_purchase_eur" inputmode="decimal">`}
    <div class="grid2"><div><label>Магазин</label><input id="f_shop" value="${v("shop")}" placeholder="dm, Amazon…"></div>
-   <div><label>Получение</label><select id="f_delivery_mode"><option value="pickup">Самовывоз</option><option value="address" ${o.delivery_mode==="address"?"selected":""}>Доставка на адрес</option></select></div></div>
-   <label>Адрес в Таджикистане</label><input id="f_address" value="${v("address")}">
+   <div><label>№ заказа в магазине</label><input id="f_shop_order_no" value="${v("shop_order_no")}" placeholder="из письма магазина"></div></div>
+   <div class="mute">№ заказа магазина нужен, чтобы письма о доставке сами привязывались к этому заказу.</div>
+   <div class="grid2"><div><label>Получение</label><select id="f_delivery_mode"><option value="pickup">Самовывоз</option><option value="address" ${o.delivery_mode==="address"?"selected":""}>Доставка на адрес</option></select></div>
+   <div><label>Адрес в Таджикистане</label><input id="f_address" value="${v("address")}"></div></div>
    <div class="grid2"><div><label>Служба доставки</label><input id="f_carrier" value="${v("carrier")}" placeholder="DHL, Hermes, DPD…"></div>
    <div><label>Трек-номер</label><input id="f_tracking_no" value="${v("tracking_no")}"></div></div>
    <div class="grid2"><div><label>Работник</label><select id="f_worker_id"><option value="">—</option>${users.map(u=>`<option value="${u.id}" ${o.worker_id===u.id?"selected":""}>${esc(u.name)}</option>`).join("")}</select></div>
@@ -234,12 +245,12 @@ function orderForm(o={}) {
   const box = o.id ? $("#dlgIn") : $("#tab");
   box.innerHTML = o.id ? html + orderExtras(o) : `<div class="card">${html}</div>`;
   $("#save").onclick = async () => {
-    const f = {}; ["client_name","client_phone","items","sale_tjs","purchase_eur","shop","delivery_mode","address","carrier","tracking_no","worker_id","flight_date","notes"]
+    const f = {}; ["client_name","client_phone","items","sale_tjs","purchase_eur","shop","shop_order_no","delivery_mode","address","carrier","tracking_no","worker_id","flight_date","notes"]
       .forEach(k=>{ const e=$("#f_"+k); if(e) f[k]=e.value.trim().replace(/^(\d+),(\d+)$/,"$1.$2"); });
     if (o.id) f.id=o.id;
     try { const r = await call("save_order",{order:f, paid_tjs:($("#f_paid")?.value||"").replace(",",".")});
       if (!o.id && f.tracking_no) await call("set_stage",{id:r.order.id, stage:"shipped"});
-      toast("Сохранено ✓"); if(o.id) $("#dlg").close(); else S.tab="orders"; await load(); } catch(e){ toast(e.message); }
+      toast(r.matched?`Сохранено ✓ · привязано писем: ${r.matched}`:"Сохранено ✓"); if(o.id) $("#dlg").close(); else S.tab="orders"; await load(); } catch(e){ toast(e.message); }
   };
 }
 
@@ -249,6 +260,8 @@ function orderExtras(o) {
    <b>Этап:</b> ${stageChip(o)} <span class="mute">с ${d(o.stage_at)}</span> ${trackBtn(o)}
    <div class="row" style="margin-top:8px">${STAGES.filter(([k])=>k!==o.stage).map(([k,l])=>`<button class="${k==="cancelled"?"bad":"ghost"}" onclick="setStage('${o.id}','${k}')">${l}</button>`).join("")}</div>
    ${o.photo_url?`<img class="ph" src="${o.photo_url}">`:""}
+   ${o.parcel_delivered_at?`<p>📬 Служба доставки отметила посылку доставленной ${d(o.parcel_delivered_at)}</p>`:""}
+   ${mailsOf(o.id).length?`<h4>Письма</h4>${mailsOf(o.id).map(m=>`<div class="mute">${d(m.received_at)} · ${KIND[m.kind]||"письмо"} · ${esc(m.subject)}</div>`).join("")}`:""}
    <h4>Оплаты: ${fmt(paid)} из ${fmt(o.sale_tjs)} TJS</h4>
    ${pays.map(p=>`<div class="mute">${d(p.paid_at)} · ${fmt(p.amount_tjs)} TJS ${esc(p.note||"")}</div>`).join("")}
    <div class="row" style="margin-top:8px"><input id="payAmt" inputmode="decimal" placeholder="Сумма, TJS" style="flex:1"><button class="ok" onclick="addPay('${o.id}')">+ Оплата</button></div>`;
@@ -258,6 +271,26 @@ async function addPay(id) {
   const a = +($("#payAmt").value||"").replace(",","."); if(!a) return toast("Введите сумму");
   try { await call("add_payment",{order_id:id, amount_tjs:a}); toast("Оплата добавлена ✓"); await load(); openOrder(id); } catch(e){ toast(e.message); }
 }
+
+/* ---------- письма ---------- */
+const KIND = {order:"🧾 заказ оформлен", shipped:"🚚 отправлено", delivered:"📬 доставлено"};
+const unmatched = () => (S.data.mails||[]).filter(m=>m.status==="unmatched");
+const mailsOf = id => (S.data.mails||[]).filter(m=>m.order_id===id);
+function mailsHtml() {
+  const ms = unmatched(), opts = S.data.orders.filter(o=>!["done","cancelled"].includes(o.stage));
+  if (!ms.length) return '<p class="mute">Все письма привязаны к заказам ✓</p>';
+  return `<p class="mute">Эти письма не удалось привязать автоматически (в заказах нет такого № заказа магазина или трек-номера). Выберите заказ или скройте письмо.</p>` +
+    ms.map(m=>`<div class="card"><div class="row"><h4 style="margin:0;flex:1">${esc(m.subject)}</h4><span class="chip">${KIND[m.kind]||"письмо"}</span></div>
+      <div class="mute">${d(m.received_at)} · ${esc(m.from_addr)}</div>
+      <div class="mute">${m.carrier?esc(m.carrier)+" ":""}${m.tracking_no?"трек "+esc(m.tracking_no):""}${m.amount_eur?" · "+fmt(m.amount_eur)+" €":""}</div>
+      <div class="row" style="margin-top:8px"><select id="ml_${m.id}" style="flex:1;min-width:180px"><option value="">— выберите заказ —</option>${opts.map(o=>`<option value="${o.id}">№${o.num} · ${esc(o.client_name)} · ${esc((o.items||"").slice(0,30))}</option>`).join("")}</select>
+      <button onclick="linkMail('${m.id}')">Привязать</button><button class="ghost" onclick="hideMail('${m.id}')">Скрыть</button></div></div>`).join("");
+}
+async function linkMail(mid) {
+  const oid = $("#ml_"+mid).value; if (!oid) return toast("Выберите заказ");
+  try { await call("link_mail",{mail_id:mid, order_id:oid}); toast("Привязано ✓"); await load(); } catch(e){ toast(e.message); }
+}
+async function hideMail(mid) { try { await call("hide_mail",{mail_id:mid}); await load(); } catch(e){ toast(e.message); } }
 
 /* ---------- money ---------- */
 function periodRange(p) {
