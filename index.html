@@ -65,6 +65,10 @@ img.ph{max-width:100%;border-radius:10px;margin-top:8px}
 input,select,textarea{font-size:16px}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:9}
 .hidden{display:none}
+.warn{background:#fff7e6;border:1px solid #f5c26b;color:#7a4b00;border-radius:12px;padding:10px;margin:10px 0}
+@media (prefers-color-scheme:dark){.warn{background:#2b2312;border-color:#7a5a1e;color:#f5d48f}}
+.tl{margin:6px 0;padding-left:0;list-style:none}.tl li{padding:4px 0;border-bottom:1px dashed var(--line)}.tl li:last-child{border:0}
+details summary{cursor:pointer;color:var(--mute);font-size:13px;margin-top:6px}
 .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .pad button{font-size:24px;padding:16px 0;border-radius:14px}
 </style>
@@ -133,6 +137,10 @@ $("#out").onclick = () => { store.set("bm_pin", null); S.pin=null; loginView(); 
 
 async function load() {
   S.data = await call("list"); S.me = S.data.me;
+  if (S.me.role==="admin" && S.data.settings && S.data.settings.mail_parser!=="2" && !S.reproc) {
+    S.reproc = true;
+    try { toast("Навожу порядок в письмах…"); await call("reprocess_mail"); S.data = await call("list"); } catch(e){ console.warn(e); }
+  }
   $("#who").textContent = S.me.name; $("#out").classList.remove("hidden");
   render();
 }
@@ -196,10 +204,10 @@ function mainView() {
 }
 
 function ordFilters() {
-  const late = S.data.orders.filter(lateDays), fresh = S.data.orders.filter(isFresh);
-  return {...(fresh.length?{fresh:[`🆕 Из почты (${fresh.length})`,isFresh]}:{}), active:["Активные",o=>!["done","cancelled"].includes(o.stage)], late:[`Задержки (${late.length})`,o=>lateDays(o)],
+  const late = S.data.orders.filter(lateDays), fresh = S.data.orders.filter(isFresh), dups = S.data.orders.filter(o=>dupsOf(o).length);
+  return {...(dups.length?{dups:[`⚠️ Дубли (${dups.length})`,o=>dupsOf(o).length]}:{}),...(fresh.length?{fresh:[`🆕 Из почты (${fresh.length})`,isFresh]}:{}), active:["Активные",o=>!["done","cancelled"].includes(o.stage)], late:[`Задержки (${late.length})`,o=>lateDays(o)],
     debt:["Долги",o=>o.stage!=="cancelled" && +o.sale_tjs-paidOf(o.id)>0.009], all:["Все",()=>true],
-    mail:[`✉️ Письма (${unmatched().length})`,()=>false]};
+    mail:[`✉️ Письма (${mailGroupsUnmatched().length})`,()=>false]};
 }
 const isFresh = o => o.auto_created && !o.client_name && o.stage!=="cancelled";
 function listHtml() {
@@ -207,11 +215,12 @@ function listHtml() {
   const F = ordFilters(), q = (S.q||"").toLowerCase();
   if (!S.filter.startsWith("st:") && !F[S.filter]) S.filter = "active";
   const flt = S.filter.startsWith("st:") ? (o=>o.stage===S.filter.slice(3)) : F[S.filter][1];
-  const hint = S.filter==="fresh" ? '<p class="mute">Эти заказы созданы сами из писем магазинов. Откройте заказ и укажите клиента и цену в TJS. Если это не заказ Bundesmarket — нажмите «Отменён».</p>' : "";
+  const hint = S.filter==="dups" ? '<p class="mute">Эти заказы похожи друг на друга (тот же № магазина, трек или тот же магазин и клиент в те же дни). Откройте заказ и нажмите «Объединить», если это один и тот же заказ.</p>' : S.filter==="fresh" ? '<p class="mute">Эти заказы созданы сами из писем магазинов. Откройте заказ и укажите клиента и цену в TJS. Если это не заказ Bundesmarket — нажмите «Отменён».</p>' : "";
   const list = S.data.orders.filter(flt).filter(o=>!q || [o.client_name,o.client_phone,o.items,o.tracking_no,o.shop_order_no,o.num].join(" ").toLowerCase().includes(q));
   return hint + list.map(o=>{ const debt=+o.sale_tjs-paidOf(o.id); return `<div class="card o" onclick="openOrder('${o.id}')">
       <div class="row"><h4>№${o.num} · ${o.client_name?esc(o.client_name):'<span style="color:var(--warn)">❓ укажите клиента</span>'}</h4>${stageChip(o)}</div>
       <div>${o.shop?`<b>${esc(o.shop)}</b> · `:""}${esc(o.items)}${o.shop_order_no?` <span class="mute">(№ ${esc(o.shop_order_no)})</span>`:""}</div>
+      ${mailLine(o)}${dupsOf(o).length?`<div style="color:var(--warn);font-size:13px;font-weight:600">⚠️ Похоже на дубль: ${dupsOf(o).map(x=>"№"+x.num).join(", ")}</div>`:""}
       <div class="mute">${d(o.created_at)} · ${fmt(o.sale_tjs)} TJS${debt>0.009?` · <b style="color:var(--bad)">долг ${fmt(debt)}</b>`:" · оплачено"}${o.tracking_no?` · ${esc(o.carrier||"")} ${esc(o.tracking_no)}`:""}${o.parcel_delivered_at?" · 📬 доставлено":""}${o.photo_url?" · 📷":""}</div></div>`}).join("") || '<p class="mute">Нет заказов</p>';
 }
 function ordersTab() {
@@ -226,7 +235,10 @@ function ordersTab() {
 function orderForm(o={}) {
   const users = (S.data.users||[]).filter(u=>u.role==="worker");
   const v = k => esc(o[k] ?? "");
+  const dups = o.id ? dupsOf(o) : [];
   const html = `<h3 style="margin-top:0">${o.id?`Заказ №${o.num}`:"Новая продажа"}</h3>
+   ${dups.map(x=>`<div class="warn">⚠️ Похоже, это тот же заказ, что <b>№${x.num}</b> · ${esc(x.client_name||"без клиента")} · ${esc(x.shop||"")} · ${esc((x.items||"").slice(0,60))}${x.shop_order_no?` (№ ${esc(x.shop_order_no)})`:""}
+     <div class="row" style="margin-top:8px"><button onclick="mergeInto('${o.id}','${x.id}')">Объединить №${x.num} сюда</button><button class="ghost" onclick="openOrder('${x.id}')">Открыть №${x.num}</button></div></div>`).join("")}
    <div class="grid2"><div><label>Клиент *</label><input id="f_client_name" value="${v("client_name")}"></div>
    <div><label>Телефон</label><input id="f_client_phone" inputmode="tel" value="${v("client_phone")}"></div></div>
    <label>Товар(ы) *</label><textarea id="f_items" rows="2">${v("items")}</textarea>
@@ -259,12 +271,14 @@ function orderForm(o={}) {
 
 function orderExtras(o) {
   const pays = (S.data.payments||[]).filter(p=>p.order_id===o.id), paid = paidOf(o.id);
-  return `<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+  const mi = mailItems(o);
+  return `   ${mi && norm(mi)!==norm(o.items)?`<div class="card" style="margin:10px 0"><b>📦 Товары по письму магазина</b><div>${esc(mi)}</div><button class="ghost" style="margin-top:8px" onclick="$('#f_items').value=${esc(JSON.stringify(mi))};toast('Вставлено — нажмите «Сохранить»')">Вставить в «Товар(ы)»</button></div>`:""}
+   <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
    <b>Этап:</b> ${stageChip(o)} <span class="mute">с ${d(o.stage_at)}</span> ${trackBtn(o)}
    <div class="row" style="margin-top:8px">${STAGES.filter(([k])=>k!==o.stage).map(([k,l])=>`<button class="${k==="cancelled"?"bad":"ghost"}" onclick="setStage('${o.id}','${k}')">${l}</button>`).join("")}</div>
    ${o.photo_url?`<img class="ph" src="${o.photo_url}">`:""}
    ${o.parcel_delivered_at?`<p>📬 Служба доставки отметила посылку доставленной ${d(o.parcel_delivered_at)}</p>`:""}
-   ${mailsOf(o.id).length?`<h4>Письма</h4>${mailsOf(o.id).map(m=>`<div class="mute">${d(m.received_at)} · ${KIND[m.kind]||"письмо"} · ${esc(m.subject)}</div>`).join("")}`:""}
+   ${mailSummaryHtml(o)}
    <h4>Оплаты: ${fmt(paid)} из ${fmt(o.sale_tjs)} TJS</h4>
    ${pays.map(p=>`<div class="mute">${d(p.paid_at)} · ${fmt(p.amount_tjs)} TJS ${esc(p.note||"")}</div>`).join("")}
    <div class="row" style="margin-top:8px"><input id="payAmt" inputmode="decimal" placeholder="Сумма, TJS" style="flex:1"><button class="ok" onclick="addPay('${o.id}')">+ Оплата</button></div>`;
@@ -278,22 +292,73 @@ async function addPay(id) {
 /* ---------- письма ---------- */
 const KIND = {order:"🧾 заказ оформлен", shipped:"🚚 отправлено", delivered:"📬 доставлено"};
 const unmatched = () => (S.data.mails||[]).filter(m=>m.status==="unmatched");
-const mailsOf = id => (S.data.mails||[]).filter(m=>m.order_id===id);
+const mailsOf = id => (S.data.mails||[]).filter(m=>m.order_id===id && m.status!=="duplicate");
+const dupMailsOf = id => (S.data.mails||[]).filter(m=>m.order_id===id && m.status==="duplicate");
+const mailItems = o => { const m = mailsOf(o.id).filter(x=>x.items_text).sort((a,b)=>a.received_at<b.received_at?-1:1)[0]; return m ? m.items_text : null; };
+const short = t => t && t.length>12 ? "…"+t.slice(-6) : (t||"");
+// сводка: по одной строке на этап вместо десятка писем
+function mailGroups(o) {
+  const ms = mailsOf(o.id).slice().sort((a,b)=>a.received_at<b.received_at?-1:1), g = {};
+  for (const m of ms) { const k = m.kind||"other"; (g[k] ||= {kind:k, first:m.received_at, last:m.received_at, n:0, tr:new Set(), car:new Set(), eur:null});
+    const x=g[k]; x.n++; x.last=m.received_at; if(m.tracking_no) x.tr.add(m.tracking_no); if(m.carrier) x.car.add(m.carrier); if(m.amount_eur&&!x.eur) x.eur=m.amount_eur; }
+  return ["order","shipped","delivered","other"].map(k=>g[k]).filter(Boolean);
+}
+function mailLine(o) {
+  const gs = mailGroups(o); if (!gs.length) return "";
+  const last = gs[gs.length-1];
+  return `<div class="mute">✉️ ${gs.map(x=>`${(KIND[x.kind]||"✉️ письмо").split(" ")[0]} ${d(x.kind==="shipped"?x.first:x.last)}`).join(" → ")} · писем: ${gs.reduce((a,x)=>a+x.n,0)}</div>`;
+}
+function mailSummaryHtml(o) {
+  const gs = mailGroups(o), dups = dupMailsOf(o.id).length; if (!gs.length) return "";
+  const lbl = {order:"🧾 Заказ оформлен", shipped:"🚚 Отправлено", delivered:"📬 Доставлено", other:"✉️ Другие письма"};
+  return `<h4 style="margin-bottom:4px">Сводка по письмам</h4><ul class="tl">${gs.map(x=>`<li><b>${lbl[x.kind]}</b> ${d(x.first)}${x.last!==x.first&&x.kind!=="order"?` · последнее ${d(x.last)}`:""}
+     <div class="mute">${[[...x.car].join(", "), x.tr.size?"трек "+[...x.tr].map(esc).join(", "):"", x.eur?fmt(x.eur)+" €":"", x.n>1?`${x.n} писем`:""].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>
+   <details><summary>Все письма (${mailsOf(o.id).length})${dups?` · повторы скрыты: ${dups}`:""}</summary>${mailsOf(o.id).map(m=>`<div class="mute">${d(m.received_at)} · ${KIND[m.kind]||"письмо"} · ${esc(m.subject)}</div>`).join("")}</details>`;
+}
+/* ---------- дубли заказов ---------- */
+const norm = s => String(s||"").toLowerCase().replace(/[^a-z0-9а-яё]/g,"");
+const dg = s => String(s||"").replace(/\D/g,"");
+const SKIP = new Set(["the","shop","store","team","customer","service","de","com","online"]);
+const shopKey = o => { const w = String(o.shop||o.shop_domain||"").toLowerCase().split(/[^a-z0-9а-яё]+/).filter(x=>x&&!SKIP.has(x)); return w[0]||""; };
+function isDup(a, b) {
+  if (a.id===b.id || a.stage==="cancelled" || b.stage==="cancelled") return false;
+  if (a.shop_order_no && b.shop_order_no && (norm(a.shop_order_no)===norm(b.shop_order_no) || (dg(a.shop_order_no).length>=7 && dg(a.shop_order_no)===dg(b.shop_order_no)))) return true;
+  if (a.tracking_no && b.tracking_no && norm(a.tracking_no).length>=8 && norm(a.tracking_no)===norm(b.tracking_no)) return true;
+  const days = Math.abs(new Date(a.created_at)-new Date(b.created_at))/864e5;
+  if (shopKey(a) && shopKey(a)===shopKey(b) && days<=4) {
+    if (a.client_name && b.client_name && norm(a.client_name)===norm(b.client_name)) return true;
+    if (a.auto_created!==b.auto_created) { const [man,au] = a.auto_created?[b,a]:[a,b]; if (!man.shop_order_no && !au.client_name) return true; }
+    if (a.items && b.items && norm(a.items)===norm(b.items)) return true;
+  }
+  return false;
+}
+const dupsOf = o => (S.data.orders||[]).filter(x=>isDup(o,x));
+async function mergeInto(targetId, sourceId) {
+  const t = S.data.orders.find(x=>x.id===targetId), s = S.data.orders.find(x=>x.id===sourceId);
+  if (!confirm(`Объединить №${s.num} в №${t.num}?\nПисьма и оплаты перейдут в №${t.num}, пустые поля заполнятся из №${s.num}, а №${s.num} исчезнет из списка.`)) return;
+  try { await call("merge_orders",{target_id:targetId, source_id:sourceId}); toast(`Объединено в №${t.num} ✓`); await load(); openOrder(targetId); } catch(e){ toast(e.message); }
+}
+function mailGroupsUnmatched() {
+  const g = new Map();
+  for (const m of unmatched()) { const k = m.tracking_no ? "t:"+norm(m.tracking_no) : "s:"+norm(m.from_addr)+norm(m.subject);
+    if (!g.has(k)) g.set(k, []); g.get(k).push(m); }
+  return [...g.values()];
+}
 function mailsHtml() {
-  const ms = unmatched(), opts = S.data.orders.filter(o=>!["done","cancelled"].includes(o.stage));
-  if (!ms.length) return '<p class="mute">Все письма привязаны к заказам ✓</p>';
-  return `<p class="mute">Эти письма не удалось привязать автоматически (в заказах нет такого № заказа магазина или трек-номера). Выберите заказ или скройте письмо.</p>` +
-    ms.map(m=>`<div class="card"><div class="row"><h4 style="margin:0;flex:1">${esc(m.subject)}</h4><span class="chip">${KIND[m.kind]||"письмо"}</span></div>
-      <div class="mute">${d(m.received_at)} · ${esc(m.from_addr)}</div>
-      <div class="mute">${m.carrier?esc(m.carrier)+" ":""}${m.tracking_no?"трек "+esc(m.tracking_no):""}${m.amount_eur?" · "+fmt(m.amount_eur)+" €":""}</div>
-      <div class="row" style="margin-top:8px"><select id="ml_${m.id}" style="flex:1;min-width:180px"><option value="">— выберите заказ —</option>${opts.map(o=>`<option value="${o.id}">№${o.num} · ${esc(o.client_name)} · ${esc((o.items||"").slice(0,30))}</option>`).join("")}</select>
-      <button onclick="linkMail('${m.id}')">Привязать</button><button class="ghost" onclick="hideMail('${m.id}')">Скрыть</button></div></div>`).join("");
+  const gs = mailGroupsUnmatched(), opts = S.data.orders.filter(o=>!["done","cancelled"].includes(o.stage));
+  if (!gs.length) return '<p class="mute">Все письма привязаны к заказам ✓</p>';
+  return `<p class="mute">Эти письма не удалось привязать автоматически. Письма об одной посылке собраны в одну карточку. Выберите заказ или скройте.</p>` +
+    gs.map(ms=>{ const m = ms[0], ids = ms.map(x=>x.id).join(","); return `<div class="card"><div class="row"><h4 style="margin:0;flex:1">${esc(m.subject)}</h4><span class="chip">${KIND[m.kind]||"письмо"}</span></div>
+      <div class="mute">${d(ms[ms.length-1].received_at)}${ms.length>1?`–${d(m.received_at)} · <b>${ms.length} писем</b>`:""} · ${esc(m.from_addr)}</div>
+      <div class="mute">${m.carrier?esc(m.carrier)+" ":""}${m.tracking_no?"трек "+esc(m.tracking_no):""}${m.amount_eur?" · "+fmt(m.amount_eur)+" €":""}${m.items_text?" · "+esc(m.items_text):""}</div>
+      <div class="row" style="margin-top:8px"><select id="ml_${m.id}" style="flex:1;min-width:180px"><option value="">— выберите заказ —</option>${opts.map(o=>`<option value="${o.id}">№${o.num} · ${esc(o.client_name||"?")} · ${esc(o.shop||"")} · ${esc((o.items||"").slice(0,30))}</option>`).join("")}</select>
+      <button onclick="linkMail('${m.id}','${ids}')">Привязать</button><button class="ghost" onclick="hideMail('${ids}')">Скрыть</button></div></div>`}).join("");
 }
-async function linkMail(mid) {
+async function linkMail(mid, ids) {
   const oid = $("#ml_"+mid).value; if (!oid) return toast("Выберите заказ");
-  try { await call("link_mail",{mail_id:mid, order_id:oid}); toast("Привязано ✓"); await load(); } catch(e){ toast(e.message); }
+  try { await call("link_mail",{mail_ids:ids.split(","), order_id:oid}); toast("Привязано ✓"); await load(); } catch(e){ toast(e.message); }
 }
-async function hideMail(mid) { try { await call("hide_mail",{mail_id:mid}); await load(); } catch(e){ toast(e.message); } }
+async function hideMail(ids) { try { await call("hide_mail",{mail_ids:ids.split(",")}); await load(); } catch(e){ toast(e.message); } }
 
 /* ---------- money ---------- */
 function periodRange(p) {
@@ -347,7 +412,13 @@ function settingsTab() {
   const s = S.data.settings||{};
   $("#tab").innerHTML = `<div class="card"><label>Курс: 1 € = ? TJS</label><input id="s_rate" inputmode="decimal" value="${esc(s.eur_tjs)}">
    <label>Считать задержкой, если заказ стоит на одном этапе больше (дней)</label><input id="s_delay" inputmode="numeric" value="${esc(s.delay_days)}">
-   <button style="margin-top:12px" onclick="saveSet()">Сохранить</button></div>`;
+   <button style="margin-top:12px" onclick="saveSet()">Сохранить</button></div>
+   <div class="card"><b>Письма</b><p class="mute">Заново разобрать все письма: убрать повторы и рассылки, привязать письма служб доставки к заказам, подтянуть товары из писем магазинов. Ручные правки в заказах не трогаются.</p>
+   <button class="ghost" onclick="reproc()">🔄 Перепроверить все письма</button></div>`;
+}
+async function reproc() {
+  toast("Проверяю письма…");
+  try { const r = await call("reprocess_mail"); const st = r.stats||{}; toast(`Готово: привязано ${(st.matched||0)}, повторов ${(st.duplicate||0)}, новых заказов ${(st.created||0)}`); await load(); } catch(e){ toast(e.message); }
 }
 async function saveSet() {
   try { await call("set_setting",{key:"eur_tjs", value:$("#s_rate").value.replace(",",".")}); await call("set_setting",{key:"delay_days", value:$("#s_delay").value}); toast("Сохранено ✓"); await load(); } catch(e){ toast(e.message); }
