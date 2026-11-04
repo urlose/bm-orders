@@ -461,14 +461,19 @@ Deno.serve(async (req) => {
     if (body.action === "ingest") return await ingest(body);
 
     const pin = String(body.pin ?? "");
+    // защита от подбора PIN: лимит на одно устройство/сеть (IP) и общий потолок.
+    // Раньше был только общий лимит 30 — любой мог 31 неверным PIN заблокировать вход всем сотрудникам на 15 минут.
+    const ip = (req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? "").split(",")[0].trim().slice(0, 64) || "?";
     const since = new Date(Date.now() - 15 * 60e3).toISOString();
-    const { count } = await db.from("ops_log").select("id", { count: "exact", head: true })
-      .eq("action", "login_fail").gte("at", since);
-    if ((count ?? 0) > 30) return json({ error: "Слишком много попыток, подождите 15 минут" }, 429);
+    const [{ count: byIp }, { count: total }] = await Promise.all([
+      db.from("ops_log").select("id", { count: "exact", head: true }).eq("action", "login_fail").gte("at", since).eq("detail->>ip", ip),
+      db.from("ops_log").select("id", { count: "exact", head: true }).eq("action", "login_fail").gte("at", since),
+    ]);
+    if ((byIp ?? 0) >= 10 || (total ?? 0) >= 60) return json({ error: "Слишком много попыток, подождите 15 минут" }, 429);
 
     const { data: me } = await db.from("ops_users").select("id,name,role")
       .eq("pin_hash", await sha(PEPPER + pin)).eq("active", true).maybeSingle();
-    if (!me) { await log(null, "login_fail"); await new Promise((r) => setTimeout(r, 800)); return json({ error: "Неверный PIN" }, 401); }
+    if (!me) { await log(null, "login_fail", null, { ip }); await new Promise((r) => setTimeout(r, 800)); return json({ error: "Неверный PIN" }, 401); }
 
     const a = body.action;
     const isAdmin = me.role === "admin", isSeller = me.role === "seller", isWorker = me.role === "worker";
